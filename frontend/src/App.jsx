@@ -2,11 +2,14 @@ import { createSignal, onMount, Show, For, createEffect } from "solid-js";
 import {
   clearSession,
   createSubmission,
+  fetchLimit,
+  fetchLimitChanges,
   fetchSubmission,
   fetchSubmissions,
   getUser,
   login,
   setSession,
+  updateLimit,
 } from "./api";
 
 const statusLabel = {
@@ -24,6 +27,7 @@ function readHash() {
   const raw = (location.hash || "#/").replace(/^#/, "") || "/";
   const m = raw.match(/^\/detail\/(\d+)/);
   if (m) return { name: "detail", id: Number(m[1]) };
+  if (raw === "/limit") return { name: "limit", id: null };
   return { name: "home", id: null };
 }
 
@@ -41,8 +45,18 @@ function App() {
   const [toolCode, setToolCode] = createSignal("");
   const [offsetUm, setOffsetUm] = createSignal("");
 
+  // 上限台状态
+  const [limit, setLimit] = createSignal(null);
+  const [changes, setChanges] = createSignal([]);
+  const [newLimit, setNewLimit] = createSignal("");
+  const [limitLoading, setLimitLoading] = createSignal(false);
+
   function goHome() {
     location.hash = "#/";
+  }
+
+  function goLimit() {
+    location.hash = "#/limit";
   }
 
   function goDetail(id) {
@@ -75,11 +89,26 @@ function App() {
     }
   }
 
+  async function loadLimitDesk() {
+    setLimitLoading(true);
+    setError("");
+    try {
+      const [cur, history] = await Promise.all([fetchLimit(), fetchLimitChanges()]);
+      setLimit(cur);
+      setChanges(history);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLimitLoading(false);
+    }
+  }
+
   onMount(() => {
     const onHash = () => setRoute(readHash());
     window.addEventListener("hashchange", onHash);
     if (user()) {
       if (route().name === "detail") loadDetail(route().id);
+      else if (route().name === "limit") loadLimitDesk();
       else loadRows();
     }
     return () => window.removeEventListener("hashchange", onHash);
@@ -90,6 +119,7 @@ function App() {
     if (!user()) return;
     if (r.name === "detail" && r.id) loadDetail(r.id);
     if (r.name === "home") loadRows();
+    if (r.name === "limit") loadLimitDesk();
   });
 
   async function handleLogin(e) {
@@ -115,6 +145,8 @@ function App() {
     setUser(null);
     setRows([]);
     setDetail(null);
+    setLimit(null);
+    setChanges([]);
     goHome();
   }
 
@@ -131,12 +163,32 @@ function App() {
     }
   }
 
+  async function handleChangeLimit(e) {
+    e.preventDefault();
+    setError("");
+    const value = Number(newLimit());
+    if (!Number.isInteger(value) || value < 0) {
+      setError("上限必须是不小于 0 的整数微米值");
+      return;
+    }
+    try {
+      const cur = await updateLimit(value);
+      setLimit(cur);
+      setNewLimit("");
+      await loadLimitDesk();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   return (
     <div class="page">
       <header class="topbar">
         <div class="brand">
           <h1>数控刀补复核台</h1>
-          <p class="hint">刀补绝对值不超过十二微米判合格，否则超差。后台认领进程用行锁跳过已占行领取待复核。</p>
+          <p class="hint">
+            操作员提交刀补，后台认领进程用行锁跳过已占行领取待复核，按上限台的上限判定合格或超差。
+          </p>
         </div>
         <Show when={user()}>
           <nav class="topnav">
@@ -149,6 +201,16 @@ function App() {
               }}
             >
               复核总览
+            </a>
+            <a
+              href="#/limit"
+              class={route().name === "limit" ? "active" : ""}
+              onClick={(e) => {
+                e.preventDefault();
+                goLimit();
+              }}
+            >
+              上限台
             </a>
           </nav>
         </Show>
@@ -285,6 +347,12 @@ function App() {
                   <p class={d().verdict === "合格" ? "pass" : d().verdict === "超差" ? "fail" : ""}>
                     结论：{d().verdict || "—"}
                   </p>
+                  <p>
+                    适用上限 µm：
+                    {d().limit_um == null
+                      ? "尚未认领，按上限台现行上限判定"
+                      : `${d().limit_um}（认领时记下的快照）`}
+                  </p>
                   <p>提交时间：{new Date(d().created_at).toLocaleString()}</p>
                   <p>
                     复核时间：
@@ -293,6 +361,100 @@ function App() {
                 </div>
               )}
             </Show>
+          </section>
+        </Show>
+
+        <Show when={route().name === "limit"}>
+          <section class="card">
+            <div class="toolbar">
+              <h2>现行数字</h2>
+              <button type="button" class="ghost" onClick={loadLimitDesk} disabled={limitLoading()}>
+                {limitLoading() ? "刷新中…" : "刷新"}
+              </button>
+            </div>
+            <Show when={limit()} fallback={<p class="hint">加载中…</p>}>
+              {(l) => (
+                <>
+                  <p class="limit-figure">
+                    合格上限 <strong>{l().limit_um}</strong> µm
+                  </p>
+                  <p class="hint">
+                    刀补绝对值不大于 {l().limit_um} µm 判合格，超过判超差。
+                    {changes().length
+                      ? ` 最近改档：${new Date(l().updated_at).toLocaleString()}`
+                      : " 系统启用后尚未改档。"}
+                  </p>
+                  <Show
+                    when={user().can_write}
+                    fallback={
+                      <p class="hint readonly-note">
+                        复核员只能查看现行上限与改档痕迹，不能改上限，也不能提交刀补。
+                      </p>
+                    }
+                  >
+                    <form onSubmit={handleChangeLimit} class="form inline limit-form">
+                      <label>
+                        新上限（微米）
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={newLimit()}
+                          onInput={(e) => setNewLimit(e.currentTarget.value)}
+                          required
+                        />
+                      </label>
+                      <button type="submit">改档</button>
+                    </form>
+                  </Show>
+                </>
+              )}
+            </Show>
+          </section>
+
+          <section class="card">
+            <h2>改档痕迹</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>旧上限 µm</th>
+                  <th>新上限 µm</th>
+                  <th>改档人</th>
+                  <th>改档时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={changes()}>
+                  {(row) => (
+                    <tr>
+                      <td>{row.old_limit_um}</td>
+                      <td>{row.new_limit_um}</td>
+                      <td>{row.changed_by || "—"}</td>
+                      <td>{new Date(row.changed_at).toLocaleString()}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+            <Show when={!changes().length && !limitLoading()}>
+              <p class="hint">暂无改档记录，系统启用后上限一直是初始值。</p>
+            </Show>
+          </section>
+
+          <section class="card">
+            <h2>认领如何吃上限</h2>
+            <ul class="rule-list">
+              <li>
+                <strong>待复核</strong>的单还没有自己的上限，随时吃<strong>上限台最新现行数字</strong>；
+                交单后、被认领前改档，判定跟着新值走。
+              </li>
+              <li>
+                worker 行锁认领、单子转入<strong>复核中</strong>的瞬间，把当时的上限记在该单上；
+                此后再改档，这张单（以及已完成单）继续用<strong>认领当时记下的上限</strong>，结论不变。
+              </li>
+              <li>判定口径：刀补绝对值 ≤ 当时上限为「合格」，超过为「超差」。</li>
+              <li>只有操作员能改档，每次改档都会在上方留下痕迹；复核员只读。</li>
+            </ul>
           </section>
         </Show>
       </Show>

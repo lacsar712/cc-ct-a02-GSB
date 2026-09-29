@@ -2,7 +2,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from desk.auth_utils import hash_password
-from desk.models import OffsetSubmission, User
+from desk.models import OffsetSubmission, ToleranceLimit, User
 
 
 class Command(BaseCommand):
@@ -38,6 +38,7 @@ class Command(BaseCommand):
                 defaults={
                     "status": OffsetSubmission.Status.DONE,
                     "verdict": verdict,
+                    "limit_um": ToleranceLimit.DEFAULT_UM,
                     "submitted_by": machinist,
                     "reviewed_at": now,
                 },

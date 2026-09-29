@@ -20,7 +20,7 @@ def setup_django() -> None:
 def claim_one_pending():
     from django.db import transaction
 
-    from desk.models import OffsetSubmission
+    from desk.models import OffsetSubmission, ToleranceLimit
     from desk.services import apply_verdict
 
     with transaction.atomic():
@@ -33,8 +33,16 @@ def claim_one_pending():
         if submission is None:
             return False
 
+        # 认领瞬间记下当时上限；此后即使上限改档，本单仍按该快照判定。
+        # 锁上限行：改档进行中时在此等待其提交，必读到确定的现行值；
+        # 本事务先持锁时，改档会等认领提交后再生效，彼时本单已进复核中。
+        limit = (
+            ToleranceLimit.objects.select_for_update()
+            .get(pk=ToleranceLimit.SINGLETON_ID)
+        )
+        submission.limit_um = limit.limit_um
         submission.status = OffsetSubmission.Status.PROCESSING
-        submission.save(update_fields=["status"])
+        submission.save(update_fields=["limit_um", "status"])
 
     apply_verdict(submission)
     return True
