@@ -143,3 +143,21 @@ td {
   color: #b91c1c;
   font-weight: 600;
 }
+
+.limit-now {
+  font-size: 1.05rem;
+}
+
+.limit-now strong {
+  font-size: 1.5rem;
+  color: #1e3a8a;
+}
+
+.rules {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.4rem;
+  color: #3a4456;
+  font-size: 0.95rem;
+}

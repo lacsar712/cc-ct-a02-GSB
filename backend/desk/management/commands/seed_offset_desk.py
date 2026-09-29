@@ -2,7 +2,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from desk.auth_utils import hash_password
-from desk.models import OffsetSubmission, User
+from desk.models import DEFAULT_TOLERANCE_UM, OffsetSubmission, ToleranceLimit, User
 
 
 class Command(BaseCommand):
@@ -26,6 +26,8 @@ class Command(BaseCommand):
             },
         )
 
+        ToleranceLimit.load()
+
         now = timezone.now()
         seeds = [
             ("T01", 5, OffsetSubmission.Verdict.PASS),
@@ -38,6 +40,7 @@ class Command(BaseCommand):
                 defaults={
                     "status": OffsetSubmission.Status.DONE,
                     "verdict": verdict,
+                    "claimed_limit_um": DEFAULT_TOLERANCE_UM,
                     "submitted_by": machinist,
                     "reviewed_at": now,
                 },

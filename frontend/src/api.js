@@ -60,3 +60,18 @@ export function createSubmission(tool_code, offset_um) {
     body: JSON.stringify({ tool_code, offset_um: Number(offset_um) }),
   });
 }
+
+export function fetchLimit() {
+  return request("/limit");
+}
+
+export function updateLimit(limit_um) {
+  return request("/limit", {
+    method: "POST",
+    body: JSON.stringify({ limit_um: Number(limit_um) }),
+  });
+}
+
+export function fetchLimitHistory() {
+  return request("/limit/history");
+}
